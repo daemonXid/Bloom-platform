@@ -1,0 +1,97 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: bloom_postgres
+    environment:
+      POSTGRES_DB: bloom_db
+      POSTGRES_USER: bloom
+      POSTGRES_PASSWORD: bloom123
+      LANG: en_US.utf8
+      LC_ALL: en_US.utf8
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bloom"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: bloom_redis
+    ports:
+      - "16379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Ollama AI Server
+  ollama:
+    image: ollama/ollama:latest
+    container_name: bloom_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    # GPU 없으면 위 deploy 섹션 제거
+
+  # Django Web Application
+  web:
+    build: .
+    container_name: bloom_web
+    command: python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - .:/app
+      - static_volume:/app/staticfiles
+      - media_volume:/app/media
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://bloom:bloom123@postgres:5432/bloom_db
+      - REDIS_URL=redis://redis:6379/0
+      - OLLAMA_BASE_URL=http://ollama:11434
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # pgAdmin - PostgreSQL Web UI (Optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: bloom_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@bloom.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+
+volumes:
+  postgres_data:
+  redis_data:
+  ollama_data:
+  static_volume:
+  media_volume:
